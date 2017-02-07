@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: controllers/registerLoginLogout.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: controllers/registerLoginLogout.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+  * @class registerLogInLogOut
+  * @description Controller for that handles user registration (new user), user login, and user logout. Makes use of databaseAndAuth and runListeners factories.
+*/
+angular.module('myApp').controller('registerLogInLogOut', function($rootScope, $scope, $location, databaseAndAuth, runListeners) {
+  /**
+    * @function '$scope.register'
+    * @memberOf registerLogInLogOut
+    * @description Handles uer registration. Creates a new user (uding Firebase native method 'createUserWithEmailAndPassword'). Extracts username from user's email (username is anything that comes before @ symbol e.g. john06@gmail.com will have username of john06). Uses promises to add user to the database after they are created. Each user is listed under their unique Id provided by Firebase authentication system (user.uid)
+  */
+  $scope.register = function() {
+    var register = databaseAndAuth.auth.createUserWithEmailAndPassword($scope.email, $scope.password);
+    register.then(function(user) {
+      databaseAndAuth.database.ref('users/' + user.uid).set({
+        username: $scope.email.slice(0, $scope.email.indexOf('@')),
+        email: $scope.email,
+      });
+      $rootScope.loggedIn = true;
+      $location.path('/map');
+    })
+    register.catch(function(error) {
+      console.log(error.message);
+    });
+  };
+  /**
+    * @function '$scope.logIn'
+    * @memberOf registerLogInLogOut
+    * @description Handles user login. Logs in an existing user (using Firebase native method 'signInWithEmailAndPassword'). Uses promises to register successful login or to catch erors. Upon login, removes any text from the input fields. Upon erorr, shows the error message to the user
+  */
+  $scope.logIn = function() {
+    var login = databaseAndAuth.auth.signInWithEmailAndPassword($scope.email, $scope.password);
+    login.then(function(user) {
+      $rootScope.userCredentials = {
+        email: user.email
+      }
+      fetchMessages();
+      getUsers();
+      localStorage.setItem('user', user);
+      $scope.email = '';
+      $scope.password = '';
+      $scope.badLogin = '';
+      $scope.$apply();
+
+      $rootScope.loggedIn = true;
+      $location.path('/map');
+    });
+    login.catch(function(error) {
+      console.log(error.message);
+      $scope.badLogin = error.message + ' If you don\'t have an account, please sign up!'
+      $scope.$apply();
+      $rootScope.loggedIn = false;
+      $location.path('/');
+    })
+  };
+  /**
+    * @function '$scope.logOut'
+    * @memberOf registerLogInLogOut
+    * @description Handles user logout. Logs out an existing user (using Firebase native methods 'remove()' and 'signOut()'). Uses promises. When user clicks the logout button, removes their coordinates from the database. After that it broadcasts (on $rootScope) that the user has logged out, and then it signs them out to remove any session data. Note: Database stores their chat messages and location, while authentication holds their session. That's why both need to be removed using .remove() and .signOut()
+  */
+  $scope.logOut = function() {
+    //on logout remove the user's coordinates from database
+    var logout = databaseAndAuth.database.ref('users/' + $scope.userId + '/coordinates').remove();
+    //then sign them out
+    logout.then(function(){
+      console.log('logged out');
+      localStorage.removeItem('user');
+      $rootScope.$broadcast('user:loggedOut', '');
+      databaseAndAuth.auth.signOut();
+      console.log('user logged out: ', $scope.userId);
+      $rootScope.loggedIn = false;
+      $location.path('/');
+      $scope.$apply();
+    });
+  };
+  /**
+    * @function $scope.showPartial
+    * @memberOf registerLogInLogOut
+    * @description shows different partials (ng-view) depenending on user authentication (e.g. it shows Login page if user is not currently logged in; shows map, chat, and locations if user is logged in - even after page refresh)
+  */
+  $scope.showPartial = function() {
+    $rootScope.showMessages = true;
+  }
+  /**
+    * @function $scope.signUp
+    * @memberOf registerLogInLogOut
+    * @description controls the signup button if you are not logged in ($rootScope.attemptSignup is false). The function toggles the attemptSignup variable depending on the user's status (logged in or not)
+  */
+  $rootScope.attemptSignup = false;
+  $scope.signUp = function () {
+    console.log($rootScope.attemptSignup);
+    $rootScope.attemptSignup = !$rootScope.attemptSignup;
+    $location.path('/signup');
+  }
+  /**
+    * @function databaseAndAuth.auth.onAuthStateChanged
+    * @memberOf registerLogInLogOut
+    * @description Native Firebase method that listens for any change in user authentication status. Every time user loads the page, goes to a different page, or clicks login/logout buttons this method is triggered and checks if the user is currently loged in. It makes use of the runListeners factory to ensure that any change in the database is properly registerd and acted upon. Takes a single parameter: databaseUser
+    @param databaseUser if user is logged in, databaseUser will be truthy and will contain information about that user (from the database). This information is used to identify the user and attach their messages and location to their appropriate database entry (i.e. John's location will not be stored under Amy's database entry). If user is logged out, databaseUser will be falsy.
+  */
+  databaseAndAuth.auth.onAuthStateChanged(function(databaseUser) {
+    if (databaseUser) {
+      console.log('calling this function');
+      localStorage.setItem('user', databaseUser);
+      runListeners.childChanged();
+      runListeners.childAdded();
+      runListeners.childRemoved();
+      $rootScope.loggedIn = true;
+      $rootScope.userCredentials = {
+        email: databaseUser.email
+      }
+      fetchMessages();
+      getUsers();
+      $rootScope.$broadcast('user:logIn', databaseUser.uid);
+      $scope.userId = databaseUser.uid;
+      $scope.$apply();
+    } else {
+      $rootScope.loggedIn = false;
+      $scope.$apply();
+    }
+  });
+  /**
+    * @class escapeEmailAddress
+    * @description Creates an unique identifier for the database based on user email. The database does not allow keys with periods (.) so this function converts periods into commas. This allows us to find the user and update/delete their data (especially private messages) based on their email.
+  */
+  function escapeEmailAddress(email) {
+    if (!email) return false
+    email = email.toLowerCase();
+    email = email.replace(/\./g, ',');
+    return email;
+  }
+/**
+  * @function $scope.changePassword
+  * @memberOf registerLogInLogOut
+  * @description Handles updating user passwords in profile dashboard using Firebase native method updatePassword().
+*/
+$scope.changePassword = function () {
+  var user = firebase.auth().currentUser;
+  console.log(user);
+  var newPassword = $scope.newPassword;
+
+  user.updatePassword(newPassword).then(function() {
+    console.log('password changed!')
+  }, function(error) {
+    console.log('error');
+  });
+}
+/**
+  * @function getUsers
+  * @description Fetches all the users from the database. Populates the dropdown messaging window (on the profile page)
+*/
+var getUsers = function () {
+  var userRef =  firebase.database().ref('users');
+  userRef.on('value', function(snapshot, prevChildKey){
+    $rootScope.currentUsers = snapshot.val();
+    $scope.$apply();
+  })
+}
+
+/**
+  * @function fetchMessages
+  * @description Fetches all the private messages from the database for the logged in user.
+*/
+var fetchMessages = function () {
+  var userRef = firebase.database().ref('privateMessages/' + escapeEmailAddress($rootScope.userCredentials.email));
+  userRef.on('value', function (snapshot, prevChildKey) {
+    $scope.privateMessages = snapshot.val();
+    $scope.$apply();
+  });
+}
+
+/**
+  * @function showProfile
+  * @description Shows the user profile of the currently logged in user (routing)
+*/
+  $scope.showProfile = function () {
+    $rootScope.accessProfile = true;
+    $location.path('/profile');
+  }
+});</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2>
+    <h3>Intro</h3>
+    <ul>
+      <li>
+        <a href="gettingStarted.html">Getting Started</a>
+      </li>
+      <li>
+        <a href="installation.html">Installing the dependencies</a>
+      </li>
+      <li>
+        <a href="setUpFirebase.html">Set up Firebase database (Google product)</a>
+      </li>
+      <li>
+        <a href="runFromLocalServer.html">Running the app from local https server</a>
+      </li>
+      <li>
+        <a href="httpsAndSSL.html">Note about https and SSL certificate</a>
+      </li>
+      <li>
+        <a href="createSSLcertificate.html">How to create your own SSL certificate</a>
+      </li>
+      <li>
+        <a href="recomendations.html">Recomendations for future work</a>
+      </li>
+      <li>
+        <a href="howToUseJSDoc.html">How to use JSDoc to write documentation from scratch</a>
+      </li>
+    </ul>
+    <h3>Methods</h3>
+    <ul>
+      <li>
+        <a href="$rootScope.attemptSignup.html">attemptSignup</a>
+      </li>
+      <li>
+        <a href="angular_module.myApp.html">myApp</a>
+      </li>
+      <li>
+        <a href="autofocus.html">autofocus</a>
+      </li>
+      <li>
+        <a href="chatterboxCtrl.html">chatterboxCtrl</a>
+      </li>
+      <li>
+        <a href="checkUserStatus.html">checkUserStatus</a>
+      </li>
+      <li>
+        <a href="config.html">config</a>
+      </li>
+      <li>
+        <a href="databaseAndAuth.html">databaseAndAuth</a>
+      </li>
+      <li>
+        <a href="escapeEmailAddress.html">escapeEmailAddress</a>
+      </li>
+      <li>
+        <a href="goHome.html">goHome</a>
+      </li>
+      <li>
+        <a href="initializeMap.html">initializeMap</a>
+      </li>
+      <li>
+        <a href="privateMessages.html">privateMessages</a>
+      </li>
+      <li>
+        <a href="registerLogInLogOut.html">registerLogInLogOut</a>
+      </li>
+      <li>
+        <a href="routeProvider.html">routeProvider</a>
+      </li>
+      <li>
+        <a href="runListeners.html">runListeners</a>
+      </li>
+      <li>
+        <a href="sendMessage.html">sendMessage</a>
+      </li>
+      <li>
+        <a href="watchCurrentUserLocation.html">watchCurrentUserLocation</a>
+      </li>
+      <li>
+        <a href="window.checkLogin.html">checkLogin</a>
+      </li>
+    </ul>
+    <h3>Global</h3>
+    <ul>
+      <li>
+        <a href="global.html#fetchMessages">fetchMessages</a>
+      </li>
+      <li>
+        <a href="global.html#getUsers">getUsers</a>
+      </li>
+      <li>
+        <a href="global.html#showProfile">showProfile</a>
+      </li>
+    </ul>
+  </nav><br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 3.4.3</a> on Mon Feb 06 2017 20:43:41 GMT-0800 (PST)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
